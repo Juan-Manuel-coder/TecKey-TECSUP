@@ -269,7 +269,7 @@ function TarjetasPage() {
                             </td>
                             {days.map((d, di) => {
                               const room = rooms[(bi + di) % Math.max(rooms.length, 1)];
-                              const show = rooms.length > 0 && (bi + di) % 3 === 0;
+                              const show = !!room && (bi + di) % 3 === 0;
                               return (
                                 <td key={d} className="border border-border p-2 text-center">
                                   {show ? (
