@@ -274,7 +274,7 @@ function TarjetasPage() {
                                 <td key={d} className="border border-border p-2 text-center">
                                   {show ? (
                                     <span className="inline-flex rounded-md bg-scheduled/15 px-2 py-1 font-semibold text-scheduled">
-                                      {room.id}
+                                      {room!.id}
                                     </span>
                                   ) : (
                                     <span className="text-muted-foreground/50">—</span>
