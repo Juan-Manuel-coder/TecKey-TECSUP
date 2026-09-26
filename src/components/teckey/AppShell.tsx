@@ -118,9 +118,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               Sábado, 26 de Septiembre de 2026
             </div>
 
-            <Select defaultValue="6">
+            <Select value={week} onValueChange={setWeek}>
               <SelectTrigger className="w-[190px] bg-card text-xs">
-                <SelectValue />
+                <SelectValue placeholder={`Semana ${week}`}>Semana {week}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
