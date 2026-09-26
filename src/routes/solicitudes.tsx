@@ -66,7 +66,7 @@ function SolicitudesPage() {
           return (
             <div key={r.id} className="surface-card flex flex-wrap items-start gap-4 p-5">
               <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-                {prof ? prof.nombres[0] + prof.apellidos[0] : "?"}
+                {prof ? `${prof.nombres.charAt(0)}${prof.apellidos.charAt(0)}` : "?"}
               </div>
               <div className="min-w-0 flex-1">
                 <p className="font-semibold">{prof ? professorName(prof) : "—"}</p>

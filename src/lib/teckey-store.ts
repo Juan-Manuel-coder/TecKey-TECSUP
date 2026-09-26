@@ -177,14 +177,17 @@ const logs: LogItem[] = [
   ["26/09/2026 12:20", "F203", "P6", "RFID-C31B", "DENEGADO"],
   ["26/09/2026 14:33", "B102", "P9", "RFID-1A6C", "CONCEDIDO"],
   ["26/09/2026 15:07", "F301", "P2", "RFID-4C21", "CONCEDIDO"],
-].map(([datetime, classroom, pid, tag, result], i) => ({
-  id: `L${i + 1}`,
-  datetime,
-  classroom,
-  professorName: professorName(professors.find((p) => p.id === pid)!),
-  tag,
-  result: result as LogItem["result"],
-}));
+].map((row, i) => {
+  const [datetime, classroom, pid, tag, result] = row as string[];
+  return {
+    id: `L${i + 1}`,
+    datetime: datetime!,
+    classroom: classroom!,
+    professorName: professorName(professors.find((p) => p.id === pid)!),
+    tag: tag!,
+    result: result as LogItem["result"],
+  };
+});
 
 export function professorName(p: Professor) {
   return `${p.nombres} ${p.apellidos}`;
