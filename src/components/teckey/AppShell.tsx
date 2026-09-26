@@ -77,6 +77,7 @@ function Brand() {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [week, setWeek] = useState("6");
   const { requests } = useTeckey();
   const pending = requests.filter((r) => r.status === "pendiente").length;
 
