@@ -89,7 +89,7 @@ const professors: Professor[] = names.map(([nombres, apellidos], i) => ({
   nombres,
   apellidos,
   dni: String(40000000 + hash(nombres + apellidos) * 7).slice(0, 8),
-  correo: `${nombres.split(" ")[0].toLowerCase()}.${apellidos.split(" ")[0].toLowerCase()}@universidad.edu.pe`,
+  correo: `${nombres.split(" ")[0]!.toLowerCase()}.${apellidos.split(" ")[0]!.toLowerCase()}@universidad.edu.pe`,
   celular: `9${String(10000000 + hash(apellidos) * 3).slice(0, 8)}`,
   cardId: null,
 }));
@@ -104,8 +104,8 @@ const cards: Card[] = hexes.map((h, i) => ({
 
 // Assign 9 of 12 cards to 9 of 12 professors
 for (let i = 0; i < 9; i++) {
-  cards[i].professorId = professors[i].id;
-  professors[i].cardId = cards[i].id;
+  cards[i]!.professorId = professors[i]!.id;
+  professors[i]!.cardId = cards[i]!.id;
 }
 
 const classrooms: Classroom[] = [];
@@ -116,7 +116,7 @@ const classrooms: Classroom[] = [];
       const seed = hash(pav + number);
       const mod = seed % 3;
       const status: SlotStatus = mod === 0 ? "ocupado" : mod === 1 ? "programado" : "disponible";
-      const [course, career] = courses[seed % courses.length];
+      const [course, career] = courses[seed % courses.length]!;
       classrooms.push({
         id: `${pav}${number}`,
         pavilion: pav,
@@ -128,7 +128,7 @@ const classrooms: Classroom[] = [];
           : {
               course,
               career,
-              professorId: professors[seed % professors.length].id,
+              professorId: professors[seed % professors.length]!.id,
               time: timeRanges[seed % timeRanges.length],
             }),
       });
