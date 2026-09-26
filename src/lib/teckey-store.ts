@@ -202,7 +202,6 @@ let state: State = { professors, cards, classrooms, requests, logs };
 
 const listeners = new Set<() => void>();
 function emit() {
-  listeners.add;
   listeners.forEach((l) => l());
 }
 function subscribe(l: () => void) {
