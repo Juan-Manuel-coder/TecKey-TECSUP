@@ -373,4 +373,159 @@ export const actions = {
       ],
     });
   },
+
+  /** Valida el ingreso con tarjeta: el aula queda ABIERTA (Modo Clase). */
+  openClassroom(classroomId: string, professorId: string | undefined, endsAtMinutes: number) {
+    const prof = state.professors.find((p) => p.id === professorId);
+    const now = Date.now();
+    const endsAt = now + Math.max(1, endsAtMinutes - minutesNow()) * 60_000;
+    set({
+      locks: {
+        ...state.locks,
+        [classroomId]: {
+          state: "abierto",
+          openedAt: now,
+          endsAt,
+          toleranceEndsAt: endsAt + 10 * 60_000,
+        },
+      },
+      logs: [
+        {
+          id: `L${now}`,
+          datetime: logStamp(),
+          classroom: classroomId,
+          professorName: prof ? professorName(prof) : "Administrador",
+          tag: prof?.cardId ? state.cards.find((c) => c.id === prof.cardId)?.code ?? "SIN-TARJETA" : "SIN-TARJETA",
+          result: "CONCEDIDO",
+        },
+        ...state.logs,
+      ],
+    });
+  },
+
+  /** Cierre manual del docente con su tarjeta. */
+  closeClassroom(classroomId: string, professorId: string | undefined, auto = false) {
+    const prof = state.professors.find((p) => p.id === professorId);
+    const locks = { ...state.locks };
+    delete locks[classroomId];
+    set({
+      locks,
+      logs: [
+        {
+          id: `L${Date.now()}${Math.random().toString(16).slice(2, 6)}`,
+          datetime: logStamp(),
+          classroom: classroomId,
+          professorName: auto ? "Cierre Automático (sistema)" : prof ? professorName(prof) : "Administrador",
+          tag: auto ? "AUTO-CIERRE" : prof?.cardId ? state.cards.find((c) => c.id === prof.cardId)?.code ?? "SIN-TARJETA" : "SIN-TARJETA",
+          result: "CONCEDIDO",
+        },
+        ...state.logs,
+      ],
+    });
+  },
+
+  /** Avanza el reloj de cerraduras: fin de clase → tolerancia 10 min → cierre automático. */
+  tickLocks() {
+    const now = Date.now();
+    let changed = false;
+    const locks: Record<string, Lock> = {};
+    const closed: string[] = [];
+    Object.entries(state.locks).forEach(([id, lock]) => {
+      if (now >= lock.toleranceEndsAt) {
+        closed.push(id);
+        changed = true;
+        return;
+      }
+      if (lock.state === "abierto" && now >= lock.endsAt) {
+        locks[id] = { ...lock, state: "tolerancia" };
+        changed = true;
+        return;
+      }
+      locks[id] = lock;
+    });
+    if (!changed) return;
+    set({
+      locks,
+      logs: [
+        ...closed.map((id) => ({
+          id: `L${now}-${id}`,
+          datetime: logStamp(),
+          classroom: id,
+          professorName: "Cierre Automático (sistema)",
+          tag: "AUTO-CIERRE",
+          result: "CONCEDIDO" as const,
+        })),
+        ...state.logs,
+      ],
+    });
+  },
+
+  /** Clase de emergencia restringida al hueco libre seleccionado. */
+  grantEmergencyBlock(e: Omit<Emergency, "id">) {
+    const prof = state.professors.find((p) => p.id === e.professorId);
+    set({
+      emergencies: [...state.emergencies, { ...e, id: `E${Date.now()}` }],
+      logs: [
+        {
+          id: `L${Date.now()}`,
+          datetime: logStamp(),
+          classroom: e.classroomId,
+          professorName: prof ? professorName(prof) : "—",
+          tag: prof?.cardId ? state.cards.find((c) => c.id === prof.cardId)?.code ?? "SIN-TARJETA" : "SIN-TARJETA",
+          result: "CONCEDIDO",
+        },
+        ...state.logs,
+      ],
+    });
+  },
 };
+
+function logStamp() {
+  const d = new Date();
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()} ${d.toTimeString().slice(0, 5)}`;
+}
+
+/** Entrada del cronograma considerando emergencias otorgadas. */
+export function scheduleEntry(
+  emergencies: Emergency[],
+  classroomId: string,
+  week: number,
+  day: number,
+  blockIndex: number,
+): ScheduleEntry | null {
+  const em = emergencies.find(
+    (e) => e.classroomId === classroomId && e.week === week && e.day === day && e.blockIndex === blockIndex,
+  );
+  if (em)
+    return {
+      course: "Clase de emergencia",
+      career: "Acceso extraordinario",
+      professorId: em.professorId,
+      emergency: true,
+      minutes: em.minutes,
+    };
+  return baseSchedule(classroomId, day, blockIndex);
+}
+
+/** Estado en vivo de un aula para el día y minuto actuales. */
+export function liveStatus(
+  emergencies: Emergency[],
+  classroomId: string,
+  week: number,
+  day: number,
+  mins: number,
+): { status: SlotStatus; entry: ScheduleEntry | null; block: Block | null } {
+  const cur = BLOCKS.find((b) => mins >= b.start && mins < b.end);
+  if (cur) {
+    const entry = scheduleEntry(emergencies, classroomId, week, day, cur.index);
+    if (entry) return { status: "ocupado", entry, block: cur };
+  }
+  const next = BLOCKS.find((b) => b.start > mins && scheduleEntry(emergencies, classroomId, week, day, b.index));
+  if (next)
+    return {
+      status: "programado",
+      entry: scheduleEntry(emergencies, classroomId, week, day, next.index),
+      block: next,
+    };
+  return { status: "disponible", entry: null, block: cur ?? null };
+}
