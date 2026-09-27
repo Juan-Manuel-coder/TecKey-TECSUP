@@ -136,6 +136,76 @@ const classrooms: Classroom[] = [];
   }
 });
 
+// ---------------- Cronograma semanal ----------------
+
+export type Block = { index: number; start: number; end: number; label: string };
+
+function hm(min: number) {
+  return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+}
+
+const blockStarts = [7 * 60, 8 * 60 + 50, 10 * 60 + 40, 12 * 60 + 30, 14 * 60 + 20, 16 * 60 + 10, 18 * 60, 19 * 60 + 50];
+export const BLOCKS: Block[] = blockStarts.map((start, index) => ({
+  index,
+  start,
+  end: start + 100,
+  label: `${hm(start)} - ${hm(start + 100)}`,
+}));
+
+export const DAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+export const WEEKS = Array.from({ length: 16 }, (_, i) => i + 1);
+
+export type ScheduleEntry = {
+  course: string;
+  career: string;
+  professorId: string;
+  emergency?: boolean;
+  minutes?: number;
+};
+
+export type Emergency = {
+  id: string;
+  classroomId: string;
+  week: number;
+  day: number;
+  blockIndex: number;
+  professorId: string;
+  minutes: number;
+};
+
+export type LockState = "cerrado" | "abierto" | "tolerancia";
+export type Lock = {
+  state: LockState;
+  openedAt: number;
+  endsAt: number;
+  toleranceEndsAt: number;
+};
+
+/** Horario base: se repite igual todas las semanas del ciclo. */
+export function baseSchedule(classroomId: string, day: number, blockIndex: number): ScheduleEntry | null {
+  const seed = hash(`${classroomId}-${day}-${blockIndex}`);
+  if (seed % 10 < 5) return null;
+  const [course, career] = courses[seed % courses.length]!;
+  return { course, career, professorId: professors[seed % professors.length]!.id };
+}
+
+export function todayIndex(d = new Date()) {
+  const js = d.getDay();
+  return js === 0 ? 5 : js - 1; // domingo se muestra como sábado
+}
+
+export function minutesNow(d = new Date()) {
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+export function currentBlock(mins = minutesNow()): Block | null {
+  return BLOCKS.find((b) => mins >= b.start && mins < b.end) ?? null;
+}
+
+export function gapMinutes(blockIndex: number) {
+  return BLOCKS[blockIndex]!.end - BLOCKS[blockIndex]!.start;
+}
+
 const requests: RequestItem[] = [
   {
     id: "R1",
