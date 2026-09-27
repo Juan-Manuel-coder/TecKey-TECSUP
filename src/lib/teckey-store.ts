@@ -269,9 +269,19 @@ type State = {
   classrooms: Classroom[];
   requests: RequestItem[];
   logs: LogItem[];
+  emergencies: Emergency[];
+  locks: Record<string, Lock>;
 };
 
-let state: State = { professors, cards, classrooms, requests, logs };
+let state: State = {
+  professors,
+  cards,
+  classrooms,
+  requests,
+  logs,
+  emergencies: [],
+  locks: {},
+};
 
 const listeners = new Set<() => void>();
 function emit() {
