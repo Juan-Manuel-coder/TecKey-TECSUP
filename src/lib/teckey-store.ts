@@ -217,7 +217,13 @@ function getSnapshot() {
 
 export function useTeckey() {
   const [snapshot, setSnapshot] = useState<State>(getSnapshot);
-  useEffect(() => subscribe(() => setSnapshot(getSnapshot())), []);
+  useEffect(() => {
+    const unsubscribe = subscribe(() => setSnapshot(getSnapshot()));
+    setSnapshot(getSnapshot());
+    return () => {
+      unsubscribe();
+    };
+  }, []);
   return snapshot;
 }
 
