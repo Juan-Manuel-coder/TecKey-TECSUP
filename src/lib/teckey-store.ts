@@ -216,7 +216,9 @@ function getSnapshot() {
 }
 
 export function useTeckey() {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const [snapshot, setSnapshot] = useState<State>(getSnapshot);
+  useEffect(() => subscribe(() => setSnapshot(getSnapshot())), []);
+  return snapshot;
 }
 
 function set(partial: Partial<State>) {
