@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 
 export type Professor = {
   id: string;
@@ -216,7 +216,15 @@ function getSnapshot() {
 }
 
 export function useTeckey() {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const [snapshot, setSnapshot] = useState<State>(getSnapshot);
+  useEffect(() => {
+    const unsubscribe = subscribe(() => setSnapshot(getSnapshot()));
+    setSnapshot(getSnapshot());
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+  return snapshot;
 }
 
 function set(partial: Partial<State>) {
