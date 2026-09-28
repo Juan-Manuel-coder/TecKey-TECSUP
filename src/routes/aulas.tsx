@@ -32,7 +32,6 @@ import {
   todayIndex,
   useTeckey,
   type Block,
-  type SlotStatus,
 } from "@/lib/teckey-store";
 import { cn } from "@/lib/utils";
 
@@ -573,5 +572,3 @@ function Detail({ icon: Icon, k, v }: { icon: typeof User; k: string; v: string 
     </div>
   );
 }
-
-export type { SlotStatus };
