@@ -10,12 +10,39 @@ export type Professor = {
   cardId: string | null;
 };
 
+export const CARD_TECHS = ["MIFARE Classic 1K (13.56 MHz)", "MIFARE DESFire EV2 (13.56 MHz)", "EM4100 (125 kHz)"] as const;
+export type CardTech = (typeof CARD_TECHS)[number];
+
 export type Card = {
   id: string;
   code: string;
+  /** UID físico leído por el lector (8 caracteres hexadecimales). */
+  uid: string;
+  tech: CardTech;
   status: "Activa" | "Inactiva";
   professorId: string | null;
+  registeredAt: string;
+  note?: string;
 };
+
+export type AccessResult = "CONCEDIDO" | "FUERA DE HORARIO" | "DENEGADO";
+
+export type NotificationItem = {
+  id: string;
+  audience: "admin" | "profesor";
+  professorId?: string;
+  kind: "info" | "success" | "warning" | "danger";
+  title: string;
+  message: string;
+  time: string;
+  read: boolean;
+};
+
+/** Ajuste manual sobre la autorización de una tarjeta en un día/bloque. */
+export type SlotOverride = { classroomId: string; enabled: boolean };
+
+/** Semana actual del ciclo usada para validar accesos en vivo. */
+export const CURRENT_WEEK = 6;
 
 export type SlotStatus = "ocupado" | "programado" | "disponible";
 
@@ -47,7 +74,7 @@ export type LogItem = {
   classroom: string;
   professorName: string;
   tag: string;
-  result: "CONCEDIDO" | "DENEGADO";
+  result: AccessResult;
 };
 
 const names: Array<[string, string]> = [
@@ -98,8 +125,11 @@ const hexes = ["8A3F", "4C21", "9BD7", "2E55", "77A0", "C31B", "5F94", "E0D2", "
 const cards: Card[] = hexes.map((h, i) => ({
   id: `C${i + 1}`,
   code: `RFID-${h}`,
-  status: i % 7 === 3 ? "Inactiva" : "Activa",
+  uid: `${h}${(hash(h) % 65536).toString(16).toUpperCase().padStart(4, "0")}`,
+  tech: CARD_TECHS[i % 3 === 2 ? 1 : 0]!,
+  status: i === 3 ? "Inactiva" : "Activa",
   professorId: null,
+  registeredAt: "17/08/2026",
 }));
 
 // Assign 9 of 12 cards to 9 of 12 professors
@@ -239,12 +269,12 @@ const requests: RequestItem[] = [
 const logs: LogItem[] = [
   ["26/09/2026 07:02", "F101", "P1", "RFID-8A3F", "CONCEDIDO"],
   ["26/09/2026 07:05", "F204", "P2", "RFID-4C21", "CONCEDIDO"],
-  ["26/09/2026 07:41", "B103", "P5", "RFID-77A0", "DENEGADO"],
-  ["26/09/2026 09:12", "F305", "P4", "RFID-2E55", "CONCEDIDO"],
-  ["26/09/2026 09:58", "B201", "P7", "RFID-5F94", "DENEGADO"],
+  ["26/09/2026 07:41", "B103", "P5", "RFID-77A0", "FUERA DE HORARIO"],
+  ["26/09/2026 09:12", "F305", "P4", "RFID-2E55", "DENEGADO"],
+  ["26/09/2026 09:58", "B201", "P7", "RFID-5F94", "FUERA DE HORARIO"],
   ["26/09/2026 10:31", "F102", "P3", "RFID-9BD7", "CONCEDIDO"],
   ["26/09/2026 11:45", "B304", "P8", "RFID-E0D2", "CONCEDIDO"],
-  ["26/09/2026 12:20", "F203", "P6", "RFID-C31B", "DENEGADO"],
+  ["26/09/2026 12:20", "F203", "P6", "RFID-C31B", "FUERA DE HORARIO"],
   ["26/09/2026 14:33", "B102", "P9", "RFID-1A6C", "CONCEDIDO"],
   ["26/09/2026 15:07", "F301", "P2", "RFID-4C21", "CONCEDIDO"],
 ].map((row, i) => {
@@ -263,6 +293,60 @@ export function professorName(p: Professor) {
   return `${p.nombres} ${p.apellidos}`;
 }
 
+const notifications: NotificationItem[] = [
+  {
+    id: "N1",
+    audience: "admin",
+    kind: "warning",
+    title: "Nueva solicitud de acceso especial",
+    message:
+      "La docente Lucía Vargas Tello solicita acceso al aula F203 por 1h 40min para recuperar la clase del feriado del 08 de setiembre.",
+    time: "26/09/2026 08:12",
+    read: false,
+  },
+  {
+    id: "N2",
+    audience: "admin",
+    kind: "warning",
+    title: "Nueva solicitud de acceso especial",
+    message: "El docente Diego Ramírez Peña solicita el aula B105 por 40min para una asesoría grupal de Redes.",
+    time: "26/09/2026 09:45",
+    read: false,
+  },
+  {
+    id: "N3",
+    audience: "admin",
+    kind: "danger",
+    title: "Acceso denegado por tarjeta deshabilitada",
+    message:
+      "La tarjeta RFID-2E55 de Jorge Luis Huamán Castro intentó abrir el aula F305 a las 09:12, pero se encuentra deshabilitada.",
+    time: "26/09/2026 09:12",
+    read: false,
+  },
+  {
+    id: "N4",
+    audience: "profesor",
+    professorId: "P4",
+    kind: "danger",
+    title: "Su tarjeta está deshabilitada",
+    message:
+      "Estimado docente, su tarjeta RFID-2E55 fue deshabilitada por la administración. Acérquese a la Oficina de Servicios para su reactivación o reemplazo; sus horarios se conservan.",
+    time: "25/09/2026 18:00",
+    read: false,
+  },
+  {
+    id: "N5",
+    audience: "profesor",
+    professorId: "P3",
+    kind: "info",
+    title: "Solicitud recibida",
+    message:
+      "Su solicitud de acceso al aula F203 (1h 40min) fue recibida y está pendiente de revisión por la administración.",
+    time: "26/09/2026 08:12",
+    read: true,
+  },
+];
+
 type State = {
   professors: Professor[];
   cards: Card[];
@@ -271,6 +355,9 @@ type State = {
   logs: LogItem[];
   emergencies: Emergency[];
   locks: Record<string, Lock>;
+  notifications: NotificationItem[];
+  /** cardId -> "dia-bloque" -> ajuste manual de autorización */
+  cardSlots: Record<string, Record<string, SlotOverride>>;
 };
 
 let state: State = {
@@ -281,7 +368,24 @@ let state: State = {
   logs,
   emergencies: [],
   locks: {},
+  notifications,
+  cardSlots: {},
 };
+
+let seq = 0;
+function uid(prefix: string) {
+  seq += 1;
+  return `${prefix}${Date.now()}-${seq}`;
+}
+
+function notif(n: Omit<NotificationItem, "id" | "time" | "read">): NotificationItem {
+  return { ...n, id: uid("N"), time: logStamp(), read: false };
+}
+
+function cardCodeOf(professorId: string | undefined) {
+  const prof = state.professors.find((p) => p.id === professorId);
+  return prof?.cardId ? state.cards.find((c) => c.id === prof.cardId)?.code ?? "SIN-TARJETA" : "SIN-TARJETA";
+}
 
 const listeners = new Set<() => void>();
 function emit() {
@@ -331,19 +435,211 @@ export const actions = {
     });
   },
   assignCard(cardId: string, professorId: string) {
+    const card = state.cards.find((c) => c.id === cardId);
+    const prof = state.professors.find((p) => p.id === professorId);
     set({
       cards: state.cards.map((c) => (c.id === cardId ? { ...c, professorId, status: "Activa" } : c)),
       professors: state.professors.map((p) => (p.id === professorId ? { ...p, cardId } : p)),
+      notifications: [
+        notif({
+          audience: "profesor",
+          professorId,
+          kind: "success",
+          title: "Tarjeta RFID asignada",
+          message: `Se le asignó la tarjeta ${card?.code}. Ya puede abrir las aulas de su horario académico; cualquier cambio de autorización le será notificado.`,
+        }),
+        notif({
+          audience: "admin",
+          kind: "info",
+          title: "Tarjeta vinculada",
+          message: `La tarjeta ${card?.code} quedó vinculada a ${prof ? professorName(prof) : "—"} con su horario académico autorizado.`,
+        }),
+        ...state.notifications,
+      ],
     });
   },
   removeCard(cardId: string) {
+    const slots = { ...state.cardSlots };
+    delete slots[cardId];
     set({
       cards: state.cards.filter((c) => c.id !== cardId),
       professors: state.professors.map((p) => (p.cardId === cardId ? { ...p, cardId: null } : p)),
+      cardSlots: slots,
     });
   },
+  /** Registra una tarjeta nueva en stock (opcionalmente la vincula de inmediato). */
+  addCard(input: { uid: string; tech: CardTech; note?: string; professorId?: string }) {
+    const id = uid("C");
+    const code = `RFID-${input.uid.slice(0, 4).toUpperCase()}`;
+    set({
+      cards: [
+        ...state.cards,
+        {
+          id,
+          code,
+          uid: input.uid.toUpperCase(),
+          tech: input.tech,
+          status: "Activa",
+          professorId: null,
+          registeredAt: logStamp().slice(0, 10),
+          note: input.note || undefined,
+        },
+      ],
+    });
+    if (input.professorId) actions.assignCard(id, input.professorId);
+    return code;
+  },
+  /** Deshabilita: conserva vínculo y datos, pero deniega todo acceso. */
+  disableCard(cardId: string) {
+    const card = state.cards.find((c) => c.id === cardId);
+    if (!card) return;
+    const prof = state.professors.find((p) => p.id === card.professorId);
+    set({
+      cards: state.cards.map((c) => (c.id === cardId ? { ...c, status: "Inactiva" } : c)),
+      notifications: [
+        ...(prof
+          ? [
+              notif({
+                audience: "profesor",
+                professorId: prof.id,
+                kind: "danger",
+                title: "Su tarjeta fue deshabilitada",
+                message: `Su tarjeta ${card.code} fue deshabilitada por la administración. No podrá abrir ninguna aula hasta su reactivación o reemplazo; sus datos y horarios se conservan.`,
+              }),
+            ]
+          : []),
+        notif({
+          audience: "admin",
+          kind: "warning",
+          title: "Tarjeta deshabilitada",
+          message: `La tarjeta ${card.code}${prof ? ` de ${professorName(prof)}` : ""} quedó deshabilitada. Todo intento de acceso se registrará como DENEGADO.`,
+        }),
+        ...state.notifications,
+      ],
+    });
+  },
+  enableCard(cardId: string) {
+    const card = state.cards.find((c) => c.id === cardId);
+    if (!card) return;
+    set({
+      cards: state.cards.map((c) => (c.id === cardId ? { ...c, status: "Activa" } : c)),
+      notifications: card.professorId
+        ? [
+            notif({
+              audience: "profesor",
+              professorId: card.professorId,
+              kind: "success",
+              title: "Su tarjeta fue reactivada",
+              message: `Su tarjeta ${card.code} vuelve a estar activa con el mismo horario autorizado que tenía antes de la deshabilitación.`,
+            }),
+            ...state.notifications,
+          ]
+        : state.notifications,
+    });
+  },
+  /** Pasa docente y horarios autorizados de una tarjeta a otra nueva del stock. */
+  transferCard(fromId: string, toId: string) {
+    const from = state.cards.find((c) => c.id === fromId);
+    const to = state.cards.find((c) => c.id === toId);
+    if (!from?.professorId || !to || to.professorId) return;
+    const pid = from.professorId;
+    const slots = { ...state.cardSlots };
+    if (slots[fromId]) slots[toId] = { ...slots[fromId] };
+    delete slots[fromId];
+    set({
+      cards: state.cards.map((c) =>
+        c.id === fromId
+          ? { ...c, professorId: null, status: "Inactiva", note: `Reemplazada por ${to.code}` }
+          : c.id === toId
+            ? { ...c, professorId: pid, status: "Activa" }
+            : c,
+      ),
+      professors: state.professors.map((p) => (p.id === pid ? { ...p, cardId: toId } : p)),
+      cardSlots: slots,
+      notifications: [
+        notif({
+          audience: "profesor",
+          professorId: pid,
+          kind: "success",
+          title: "Nueva tarjeta asignada",
+          message: `Su tarjeta ${from.code} fue reemplazada por ${to.code}. Todos sus horarios y aulas autorizadas se transfirieron sin cambios.`,
+        }),
+        notif({
+          audience: "admin",
+          kind: "info",
+          title: "Transferencia de tarjeta completada",
+          message: `Los datos y horarios de ${from.code} se transfirieron a ${to.code}. La tarjeta anterior quedó inactiva en stock.`,
+        }),
+        ...state.notifications,
+      ],
+    });
+  },
+  /** Habilita o deshabilita la autorización de una tarjeta en un día/bloque. */
+  setCardSlot(cardId: string, day: number, blockIndex: number, override: SlotOverride | null) {
+    const key = `${day}-${blockIndex}`;
+    const current = { ...(state.cardSlots[cardId] ?? {}) };
+    if (override) current[key] = override;
+    else delete current[key];
+    const card = state.cards.find((c) => c.id === cardId);
+    const block = BLOCKS[blockIndex]!;
+    const room = override?.classroomId ?? "";
+    set({
+      cardSlots: { ...state.cardSlots, [cardId]: current },
+      notifications: card?.professorId
+        ? [
+            notif({
+              audience: "profesor",
+              professorId: card.professorId,
+              kind: override && !override.enabled ? "warning" : "info",
+              title: override && !override.enabled ? "Acceso retirado en su horario" : "Horario de acceso actualizado",
+              message:
+                override && !override.enabled
+                  ? `Su tarjeta ${card.code} ya no podrá abrir el aula ${room} el ${DAYS[day]} de ${block.label}.`
+                  : `Su tarjeta ${card.code} queda autorizada el ${DAYS[day]} de ${block.label}${room ? ` en el aula ${room}` : ""}.`,
+            }),
+            ...state.notifications,
+          ]
+        : state.notifications,
+    });
+  },
+  /** Simula la lectura de una tarjeta en el lector de un aula. */
+  swipeCard(cardId: string, classroomId: string): AccessResult {
+    const card = state.cards.find((c) => c.id === cardId);
+    const prof = state.professors.find((p) => p.id === card?.professorId);
+    const result = evaluateAccess(state, cardId, classroomId, CURRENT_WEEK, todayIndex(), minutesNow());
+    pushAccess(classroomId, prof ? professorName(prof) : "Sin docente", card?.code ?? "DESCONOCIDA", result);
+    return result;
+  },
   resolveRequest(id: string, status: "aprobada" | "rechazada") {
-    set({ requests: state.requests.map((r) => (r.id === id ? { ...r, status } : r)) });
+    const r = state.requests.find((x) => x.id === id);
+    set({
+      requests: state.requests.map((x) => (x.id === id ? { ...x, status } : x)),
+      notifications: r
+        ? [
+            notif({
+              audience: "profesor",
+              professorId: r.professorId,
+              kind: status === "aprobada" ? "success" : "danger",
+              title: status === "aprobada" ? "Solicitud aprobada" : "Solicitud rechazada",
+              message:
+                status === "aprobada"
+                  ? `Su solicitud de acceso al aula ${r.classroom} por ${r.duration} fue aprobada. Su tarjeta quedará habilitada durante ese periodo.`
+                  : `Su solicitud de acceso al aula ${r.classroom} por ${r.duration} fue rechazada por la administración. Puede presentar una nueva solicitud con otro horario.`,
+            }),
+            ...state.notifications,
+          ]
+        : state.notifications,
+    });
+  },
+  markNotificationRead(id: string) {
+    set({ notifications: state.notifications.map((n) => (n.id === id ? { ...n, read: true } : n)) });
+  },
+  markAllRead(audience: "admin" | "profesor", professorId?: string) {
+    set({
+      notifications: state.notifications.map((n) =>
+        n.audience === audience && (!professorId || n.professorId === professorId) ? { ...n, read: true } : n,
+      ),
+    });
   },
   grantEmergency(classroomId: string, professorId: string, duration: string) {
     const prof = state.professors.find((p) => p.id === professorId);
@@ -374,9 +670,16 @@ export const actions = {
     });
   },
 
-  /** Valida el ingreso con tarjeta: el aula queda ABIERTA (Modo Clase). */
-  openClassroom(classroomId: string, professorId: string | undefined, endsAtMinutes: number) {
+  /** Valida el ingreso con tarjeta: el aula queda ABIERTA (Modo Clase) solo si la tarjeta está autorizada. */
+  openClassroom(classroomId: string, professorId: string | undefined, endsAtMinutes: number): AccessResult {
     const prof = state.professors.find((p) => p.id === professorId);
+    if (prof?.cardId) {
+      const result = evaluateAccess(state, prof.cardId, classroomId, CURRENT_WEEK, todayIndex(), minutesNow());
+      if (result !== "CONCEDIDO") {
+        pushAccess(classroomId, professorName(prof), cardCodeOf(prof.id), result);
+        return result;
+      }
+    }
     const now = Date.now();
     const endsAt = now + Math.max(1, endsAtMinutes - minutesNow()) * 60_000;
     set({
@@ -391,16 +694,17 @@ export const actions = {
       },
       logs: [
         {
-          id: `L${now}`,
+          id: uid("L"),
           datetime: logStamp(),
           classroom: classroomId,
           professorName: prof ? professorName(prof) : "Administrador",
-          tag: prof?.cardId ? state.cards.find((c) => c.id === prof.cardId)?.code ?? "SIN-TARJETA" : "SIN-TARJETA",
+          tag: cardCodeOf(prof?.id),
           result: "CONCEDIDO",
         },
         ...state.logs,
       ],
     });
+    return "CONCEDIDO";
   },
 
   /** Cierre manual del docente con su tarjeta. */
@@ -448,7 +752,7 @@ export const actions = {
       locks,
       logs: [
         ...closed.map((id) => ({
-          id: `L${now}-${id}`,
+          id: uid("L"),
           datetime: logStamp(),
           classroom: id,
           professorName: "Cierre Automático (sistema)",
@@ -457,28 +761,177 @@ export const actions = {
         })),
         ...state.logs,
       ],
+      notifications: [
+        ...closed.map((id) =>
+          notif({
+            audience: "admin",
+            kind: "warning",
+            title: "Cierre automático ejecutado",
+            message: `El aula ${id} se cerró automáticamente tras 10 minutos de tolerancia porque el docente no pasó su tarjeta al finalizar la clase.`,
+          }),
+        ),
+        ...state.notifications,
+      ],
     });
   },
 
   /** Clase de emergencia restringida al hueco libre seleccionado. */
   grantEmergencyBlock(e: Omit<Emergency, "id">) {
     const prof = state.professors.find((p) => p.id === e.professorId);
+    const block = BLOCKS[e.blockIndex]!;
     set({
-      emergencies: [...state.emergencies, { ...e, id: `E${Date.now()}` }],
+      emergencies: [...state.emergencies, { ...e, id: uid("E") }],
       logs: [
         {
-          id: `L${Date.now()}`,
+          id: uid("L"),
           datetime: logStamp(),
           classroom: e.classroomId,
           professorName: prof ? professorName(prof) : "—",
-          tag: prof?.cardId ? state.cards.find((c) => c.id === prof.cardId)?.code ?? "SIN-TARJETA" : "SIN-TARJETA",
+          tag: cardCodeOf(e.professorId),
           result: "CONCEDIDO",
         },
         ...state.logs,
       ],
+      notifications: [
+        notif({
+          audience: "profesor",
+          professorId: e.professorId,
+          kind: "success",
+          title: "Clase de emergencia habilitada",
+          message: `Se le habilitó el aula ${e.classroomId} el ${DAYS[e.day]} (semana ${e.week}) de ${block.label}, por ${e.minutes} minutos. Su tarjeta abrirá la puerta solo durante ese periodo.`,
+        }),
+        ...state.notifications,
+      ],
     });
   },
 };
+
+function pushAccess(classroomId: string, name: string, tag: string, result: AccessResult) {
+  set({
+    logs: [{ id: uid("L"), datetime: logStamp(), classroom: classroomId, professorName: name, tag, result }, ...state.logs],
+    notifications:
+      result === "CONCEDIDO"
+        ? state.notifications
+        : [
+            notif({
+              audience: "admin",
+              kind: result === "DENEGADO" ? "danger" : "warning",
+              title: result === "DENEGADO" ? "Acceso denegado" : "Intento fuera de horario",
+              message:
+                result === "DENEGADO"
+                  ? `La tarjeta ${tag} (${name}) intentó abrir el aula ${classroomId}, pero está deshabilitada o no registrada.`
+                  : `La tarjeta ${tag} (${name}) intentó abrir el aula ${classroomId} fuera de su horario autorizado.`,
+            }),
+            ...state.notifications,
+          ],
+  });
+}
+
+// ---------------- Autorizaciones por tarjeta ----------------
+
+export type ProfSlot = { classroomId: string; course: string; career: string };
+const profScheduleCache = new Map<string, Record<string, ProfSlot>>();
+
+/** Horario académico base del docente (día-bloque -> aula). */
+export function profSchedule(professorId: string): Record<string, ProfSlot> {
+  const hit = profScheduleCache.get(professorId);
+  if (hit) return hit;
+  const out: Record<string, ProfSlot> = {};
+  for (const room of classrooms) {
+    for (let d = 0; d < DAYS.length; d++) {
+      for (const b of BLOCKS) {
+        const e = baseSchedule(room.id, d, b.index);
+        const key = `${d}-${b.index}`;
+        if (e && e.professorId === professorId && !out[key])
+          out[key] = { classroomId: room.id, course: e.course, career: e.career };
+      }
+    }
+  }
+  profScheduleCache.set(professorId, out);
+  return out;
+}
+
+export type CardSlotInfo = {
+  classroomId: string;
+  course: string;
+  enabled: boolean;
+  source: "horario" | "extra" | "emergencia";
+};
+
+/** Autorización efectiva de una tarjeta en un día/bloque de una semana. */
+export function cardSlot(
+  s: Pick<State, "cards" | "cardSlots" | "emergencies">,
+  cardId: string,
+  week: number,
+  day: number,
+  blockIndex: number,
+): CardSlotInfo | null {
+  const card = s.cards.find((c) => c.id === cardId);
+  const key = `${day}-${blockIndex}`;
+  const ov = s.cardSlots[cardId]?.[key];
+  const base = card?.professorId ? profSchedule(card.professorId)[key] : undefined;
+  const em = card?.professorId
+    ? s.emergencies.find(
+        (e) => e.professorId === card.professorId && e.week === week && e.day === day && e.blockIndex === blockIndex,
+      )
+    : undefined;
+  if (ov)
+    return {
+      classroomId: ov.classroomId,
+      course: base?.course ?? "Acceso adicional",
+      enabled: ov.enabled,
+      source: base ? "horario" : "extra",
+    };
+  if (em) return { classroomId: em.classroomId, course: "Clase de emergencia", enabled: true, source: "emergencia" };
+  if (base) return { classroomId: base.classroomId, course: base.course, enabled: true, source: "horario" };
+  return null;
+}
+
+/** Regla de acceso: tarjeta deshabilitada → DENEGADO; sin permiso en ese bloque/aula → FUERA DE HORARIO. */
+export function evaluateAccess(
+  s: Pick<State, "cards" | "cardSlots" | "emergencies">,
+  cardId: string,
+  classroomId: string,
+  week: number,
+  day: number,
+  mins: number,
+): AccessResult {
+  const card = s.cards.find((c) => c.id === cardId);
+  if (!card || card.status === "Inactiva" || !card.professorId) return "DENEGADO";
+  const block = BLOCKS.find((b) => mins >= b.start - 10 && mins < b.end);
+  if (!block) return "FUERA DE HORARIO";
+  const ov = s.cardSlots[cardId]?.[`${day}-${block.index}`];
+  if (ov) return ov.enabled && ov.classroomId === classroomId ? "CONCEDIDO" : "FUERA DE HORARIO";
+  const em = s.emergencies.some(
+    (e) =>
+      e.professorId === card.professorId &&
+      e.classroomId === classroomId &&
+      e.week === week &&
+      e.day === day &&
+      e.blockIndex === block.index,
+  );
+  if (em) return "CONCEDIDO";
+  return baseSchedule(classroomId, day, block.index)?.professorId === card.professorId ? "CONCEDIDO" : "FUERA DE HORARIO";
+}
+
+/** Conteo de bloques de clase del día actual por estado. */
+export function todayStatusCounts(emergencies: Emergency[], rooms: Classroom[], week: number, day: number, mins: number) {
+  let ocupado = 0;
+  let programado = 0;
+  let disponible = 0;
+  for (const room of rooms) {
+    for (const b of BLOCKS) {
+      if (b.end <= mins) continue;
+      const entry = scheduleEntry(emergencies, room.id, week, day, b.index);
+      const isNow = mins >= b.start;
+      if (entry) {
+        if (isNow) ocupado++;
+        else programado++;
+      } else disponible++;
+    }
+  }
+  return { ocupado, programado, disponible };
+}
 
 function logStamp() {
   const d = new Date();
