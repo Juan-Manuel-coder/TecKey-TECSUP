@@ -670,9 +670,16 @@ export const actions = {
     });
   },
 
-  /** Valida el ingreso con tarjeta: el aula queda ABIERTA (Modo Clase). */
-  openClassroom(classroomId: string, professorId: string | undefined, endsAtMinutes: number) {
+  /** Valida el ingreso con tarjeta: el aula queda ABIERTA (Modo Clase) solo si la tarjeta está autorizada. */
+  openClassroom(classroomId: string, professorId: string | undefined, endsAtMinutes: number): AccessResult {
     const prof = state.professors.find((p) => p.id === professorId);
+    if (prof?.cardId) {
+      const result = evaluateAccess(state, prof.cardId, classroomId, CURRENT_WEEK, todayIndex(), minutesNow());
+      if (result !== "CONCEDIDO") {
+        pushAccess(classroomId, professorName(prof), cardCodeOf(prof.id), result);
+        return result;
+      }
+    }
     const now = Date.now();
     const endsAt = now + Math.max(1, endsAtMinutes - minutesNow()) * 60_000;
     set({
@@ -687,16 +694,17 @@ export const actions = {
       },
       logs: [
         {
-          id: `L${now}`,
+          id: uid("L"),
           datetime: logStamp(),
           classroom: classroomId,
           professorName: prof ? professorName(prof) : "Administrador",
-          tag: prof?.cardId ? state.cards.find((c) => c.id === prof.cardId)?.code ?? "SIN-TARJETA" : "SIN-TARJETA",
+          tag: cardCodeOf(prof?.id),
           result: "CONCEDIDO",
         },
         ...state.logs,
       ],
     });
+    return "CONCEDIDO";
   },
 
   /** Cierre manual del docente con su tarjeta. */
@@ -744,7 +752,7 @@ export const actions = {
       locks,
       logs: [
         ...closed.map((id) => ({
-          id: `L${now}-${id}`,
+          id: uid("L"),
           datetime: logStamp(),
           classroom: id,
           professorName: "Cierre Automático (sistema)",
@@ -753,28 +761,177 @@ export const actions = {
         })),
         ...state.logs,
       ],
+      notifications: [
+        ...closed.map((id) =>
+          notif({
+            audience: "admin",
+            kind: "warning",
+            title: "Cierre automático ejecutado",
+            message: `El aula ${id} se cerró automáticamente tras 10 minutos de tolerancia porque el docente no pasó su tarjeta al finalizar la clase.`,
+          }),
+        ),
+        ...state.notifications,
+      ],
     });
   },
 
   /** Clase de emergencia restringida al hueco libre seleccionado. */
   grantEmergencyBlock(e: Omit<Emergency, "id">) {
     const prof = state.professors.find((p) => p.id === e.professorId);
+    const block = BLOCKS[e.blockIndex]!;
     set({
-      emergencies: [...state.emergencies, { ...e, id: `E${Date.now()}` }],
+      emergencies: [...state.emergencies, { ...e, id: uid("E") }],
       logs: [
         {
-          id: `L${Date.now()}`,
+          id: uid("L"),
           datetime: logStamp(),
           classroom: e.classroomId,
           professorName: prof ? professorName(prof) : "—",
-          tag: prof?.cardId ? state.cards.find((c) => c.id === prof.cardId)?.code ?? "SIN-TARJETA" : "SIN-TARJETA",
+          tag: cardCodeOf(e.professorId),
           result: "CONCEDIDO",
         },
         ...state.logs,
       ],
+      notifications: [
+        notif({
+          audience: "profesor",
+          professorId: e.professorId,
+          kind: "success",
+          title: "Clase de emergencia habilitada",
+          message: `Se le habilitó el aula ${e.classroomId} el ${DAYS[e.day]} (semana ${e.week}) de ${block.label}, por ${e.minutes} minutos. Su tarjeta abrirá la puerta solo durante ese periodo.`,
+        }),
+        ...state.notifications,
+      ],
     });
   },
 };
+
+function pushAccess(classroomId: string, name: string, tag: string, result: AccessResult) {
+  set({
+    logs: [{ id: uid("L"), datetime: logStamp(), classroom: classroomId, professorName: name, tag, result }, ...state.logs],
+    notifications:
+      result === "CONCEDIDO"
+        ? state.notifications
+        : [
+            notif({
+              audience: "admin",
+              kind: result === "DENEGADO" ? "danger" : "warning",
+              title: result === "DENEGADO" ? "Acceso denegado" : "Intento fuera de horario",
+              message:
+                result === "DENEGADO"
+                  ? `La tarjeta ${tag} (${name}) intentó abrir el aula ${classroomId}, pero está deshabilitada o no registrada.`
+                  : `La tarjeta ${tag} (${name}) intentó abrir el aula ${classroomId} fuera de su horario autorizado.`,
+            }),
+            ...state.notifications,
+          ],
+  });
+}
+
+// ---------------- Autorizaciones por tarjeta ----------------
+
+export type ProfSlot = { classroomId: string; course: string; career: string };
+const profScheduleCache = new Map<string, Record<string, ProfSlot>>();
+
+/** Horario académico base del docente (día-bloque -> aula). */
+export function profSchedule(professorId: string): Record<string, ProfSlot> {
+  const hit = profScheduleCache.get(professorId);
+  if (hit) return hit;
+  const out: Record<string, ProfSlot> = {};
+  for (const room of classrooms) {
+    for (let d = 0; d < DAYS.length; d++) {
+      for (const b of BLOCKS) {
+        const e = baseSchedule(room.id, d, b.index);
+        const key = `${d}-${b.index}`;
+        if (e && e.professorId === professorId && !out[key])
+          out[key] = { classroomId: room.id, course: e.course, career: e.career };
+      }
+    }
+  }
+  profScheduleCache.set(professorId, out);
+  return out;
+}
+
+export type CardSlotInfo = {
+  classroomId: string;
+  course: string;
+  enabled: boolean;
+  source: "horario" | "extra" | "emergencia";
+};
+
+/** Autorización efectiva de una tarjeta en un día/bloque de una semana. */
+export function cardSlot(
+  s: Pick<State, "cards" | "cardSlots" | "emergencies">,
+  cardId: string,
+  week: number,
+  day: number,
+  blockIndex: number,
+): CardSlotInfo | null {
+  const card = s.cards.find((c) => c.id === cardId);
+  const key = `${day}-${blockIndex}`;
+  const ov = s.cardSlots[cardId]?.[key];
+  const base = card?.professorId ? profSchedule(card.professorId)[key] : undefined;
+  const em = card?.professorId
+    ? s.emergencies.find(
+        (e) => e.professorId === card.professorId && e.week === week && e.day === day && e.blockIndex === blockIndex,
+      )
+    : undefined;
+  if (ov)
+    return {
+      classroomId: ov.classroomId,
+      course: base?.course ?? "Acceso adicional",
+      enabled: ov.enabled,
+      source: base ? "horario" : "extra",
+    };
+  if (em) return { classroomId: em.classroomId, course: "Clase de emergencia", enabled: true, source: "emergencia" };
+  if (base) return { classroomId: base.classroomId, course: base.course, enabled: true, source: "horario" };
+  return null;
+}
+
+/** Regla de acceso: tarjeta deshabilitada → DENEGADO; sin permiso en ese bloque/aula → FUERA DE HORARIO. */
+export function evaluateAccess(
+  s: Pick<State, "cards" | "cardSlots" | "emergencies">,
+  cardId: string,
+  classroomId: string,
+  week: number,
+  day: number,
+  mins: number,
+): AccessResult {
+  const card = s.cards.find((c) => c.id === cardId);
+  if (!card || card.status === "Inactiva" || !card.professorId) return "DENEGADO";
+  const block = BLOCKS.find((b) => mins >= b.start - 10 && mins < b.end);
+  if (!block) return "FUERA DE HORARIO";
+  const ov = s.cardSlots[cardId]?.[`${day}-${block.index}`];
+  if (ov) return ov.enabled && ov.classroomId === classroomId ? "CONCEDIDO" : "FUERA DE HORARIO";
+  const em = s.emergencies.some(
+    (e) =>
+      e.professorId === card.professorId &&
+      e.classroomId === classroomId &&
+      e.week === week &&
+      e.day === day &&
+      e.blockIndex === block.index,
+  );
+  if (em) return "CONCEDIDO";
+  return baseSchedule(classroomId, day, block.index)?.professorId === card.professorId ? "CONCEDIDO" : "FUERA DE HORARIO";
+}
+
+/** Conteo de bloques de clase del día actual por estado. */
+export function todayStatusCounts(emergencies: Emergency[], rooms: Classroom[], week: number, day: number, mins: number) {
+  let ocupado = 0;
+  let programado = 0;
+  let disponible = 0;
+  for (const room of rooms) {
+    for (const b of BLOCKS) {
+      if (b.end <= mins) continue;
+      const entry = scheduleEntry(emergencies, room.id, week, day, b.index);
+      const isNow = mins >= b.start;
+      if (entry) {
+        if (isNow) ocupado++;
+        else programado++;
+      } else disponible++;
+    }
+  }
+  return { ocupado, programado, disponible };
+}
 
 function logStamp() {
   const d = new Date();
