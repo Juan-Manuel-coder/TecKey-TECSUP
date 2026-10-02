@@ -22,7 +22,7 @@ export type Card = {
   status: "Activa" | "Inactiva";
   professorId: string | null;
   registeredAt: string;
-  note?: string;
+  note?: string | undefined;
 };
 
 export type AccessResult = "CONCEDIDO" | "FUERA DE HORARIO" | "DENEGADO";
