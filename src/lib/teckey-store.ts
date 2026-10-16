@@ -66,6 +66,10 @@ export type RequestItem = {
   requestedAt: string;
   duration: string;
   status: "pendiente" | "aprobada" | "rechazada";
+  kind?: "especial" | "recuperacion" | "contingencia";
+  week?: number;
+  day?: number;
+  blockIndex?: number;
 };
 
 export type LogItem = {
@@ -612,25 +616,129 @@ export const actions = {
   },
   resolveRequest(id: string, status: "aprobada" | "rechazada") {
     const r = state.requests.find((x) => x.id === id);
+    if (!r) return;
+    let extra: Partial<State> = {};
+    if (status === "aprobada" && r.kind === "recuperacion" && r.week != null && r.day != null && r.blockIndex != null) {
+      extra = {
+        emergencies: [
+          ...state.emergencies,
+          {
+            id: uid("E"),
+            classroomId: r.classroom,
+            week: r.week,
+            day: r.day,
+            blockIndex: r.blockIndex,
+            professorId: r.professorId,
+            minutes: gapMinutes(r.blockIndex),
+          },
+        ],
+      };
+    }
+    if (status === "aprobada" && r.kind === "contingencia") {
+      const now = Date.now();
+      const block = r.blockIndex != null ? BLOCKS[r.blockIndex] : undefined;
+      const endsAt = now + Math.max(1, (block?.end ?? minutesNow() + 40) - minutesNow()) * 60_000;
+      const prof = state.professors.find((p) => p.id === r.professorId);
+      extra = {
+        locks: {
+          ...state.locks,
+          [r.classroom]: { state: "abierto", openedAt: now, endsAt, toleranceEndsAt: endsAt + 10 * 60_000 },
+        },
+        logs: [
+          {
+            id: uid("L"),
+            datetime: logStamp(),
+            classroom: r.classroom,
+            professorName: prof ? professorName(prof) : "—",
+            tag: "REMOTO-ADMIN",
+            result: "CONCEDIDO",
+          },
+          ...state.logs,
+        ],
+      };
+    }
+    const what =
+      r.kind === "contingencia"
+        ? `apertura por contingencia del aula ${r.classroom}`
+        : `acceso al aula ${r.classroom} por ${r.duration}`;
     set({
+      ...extra,
       requests: state.requests.map((x) => (x.id === id ? { ...x, status } : x)),
-      notifications: r
-        ? [
-            notif({
-              audience: "profesor",
-              professorId: r.professorId,
-              kind: status === "aprobada" ? "success" : "danger",
-              title: status === "aprobada" ? "Solicitud aprobada" : "Solicitud rechazada",
-              message:
-                status === "aprobada"
-                  ? `Su solicitud de acceso al aula ${r.classroom} por ${r.duration} fue aprobada. Su tarjeta quedará habilitada durante ese periodo.`
-                  : `Su solicitud de acceso al aula ${r.classroom} por ${r.duration} fue rechazada por la administración. Puede presentar una nueva solicitud con otro horario.`,
-            }),
-            ...state.notifications,
-          ]
-        : state.notifications,
+      notifications: [
+        notif({
+          audience: "profesor",
+          professorId: r.professorId,
+          kind: status === "aprobada" ? "success" : "danger",
+          title: status === "aprobada" ? "Solicitud aprobada" : "Solicitud rechazada",
+          message:
+            status === "aprobada"
+              ? r.kind === "contingencia"
+                ? `Su solicitud de ${what} fue aprobada. La puerta fue desbloqueada remotamente.`
+                : `Su solicitud de ${what} fue aprobada. Su tarjeta quedará habilitada durante ese periodo.`
+              : `Su solicitud de ${what} fue rechazada por la administración.`,
+        }),
+        ...state.notifications,
+      ],
     });
   },
+  requestRecovery(input: { professorId: string; classroomId: string; week: number; day: number; blockIndex: number; reason: string }) {
+    const prof = state.professors.find((p) => p.id === input.professorId);
+    const block = BLOCKS[input.blockIndex]!;
+    const req: RequestItem = {
+      id: uid("R"),
+      professorId: input.professorId,
+      classroom: input.classroomId,
+      reason: input.reason,
+      requestedAt: logStamp(),
+      duration: `${gapMinutes(input.blockIndex)} min · ${DAYS[input.day]} S${input.week} ${block.label}`,
+      status: "pendiente",
+      kind: "recuperacion",
+      week: input.week,
+      day: input.day,
+      blockIndex: input.blockIndex,
+    };
+    set({
+      requests: [req, ...state.requests],
+      notifications: [
+        notif({
+          audience: "admin",
+          kind: "warning",
+          title: "Nueva solicitud de recuperación",
+          message: `${prof ? professorName(prof) : "Un docente"} solicita el aula ${input.classroomId} el ${DAYS[input.day]} (semana ${input.week}) de ${block.label}.`,
+        }),
+        ...state.notifications,
+      ],
+    });
+  },
+  requestContingency(input: { professorId: string; classroomId: string; blockIndex: number; reason: string }) {
+    const prof = state.professors.find((p) => p.id === input.professorId);
+    const req: RequestItem = {
+      id: uid("R"),
+      professorId: input.professorId,
+      classroom: input.classroomId,
+      reason: input.reason,
+      requestedAt: logStamp(),
+      duration: `Apertura remota · ${BLOCKS[input.blockIndex]!.label}`,
+      status: "pendiente",
+      kind: "contingencia",
+      week: CURRENT_WEEK,
+      day: todayIndex(),
+      blockIndex: input.blockIndex,
+    };
+    set({
+      requests: [req, ...state.requests],
+      notifications: [
+        notif({
+          audience: "admin",
+          kind: "danger",
+          title: "Apertura por contingencia (fallo de huella)",
+          message: `${prof ? professorName(prof) : "Un docente"} solicita desbloqueo remoto del aula ${input.classroomId}: ${input.reason}`,
+        }),
+        ...state.notifications,
+      ],
+    });
+  },
+
   markNotificationRead(id: string) {
     set({ notifications: state.notifications.map((n) => (n.id === id ? { ...n, read: true } : n)) });
   },
