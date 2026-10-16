@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AulasRouteImport } from './routes/aulas'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as LogsRouteImport } from './routes/logs'
+import { Route as ProfesorRouteImport } from './routes/profesor'
 import { Route as ProfesoresRouteImport } from './routes/profesores'
 import { Route as SolicitudesRouteImport } from './routes/solicitudes'
 import { Route as TarjetasRouteImport } from './routes/tarjetas'
@@ -37,6 +38,11 @@ const LogsRoute = LogsRouteImport.update({
   path: '/logs',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProfesorRoute = ProfesorRouteImport.update({
+  id: '/profesor',
+  path: '/profesor',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProfesoresRoute = ProfesoresRouteImport.update({
   id: '/profesores',
   path: '/profesores',
@@ -58,6 +64,7 @@ export interface FileRoutesByFullPath {
   '/aulas': typeof AulasRoute
   '/login': typeof LoginRoute
   '/logs': typeof LogsRoute
+  '/profesor': typeof ProfesorRoute
   '/profesores': typeof ProfesoresRoute
   '/solicitudes': typeof SolicitudesRoute
   '/tarjetas': typeof TarjetasRoute
@@ -67,6 +74,7 @@ export interface FileRoutesByTo {
   '/aulas': typeof AulasRoute
   '/login': typeof LoginRoute
   '/logs': typeof LogsRoute
+  '/profesor': typeof ProfesorRoute
   '/profesores': typeof ProfesoresRoute
   '/solicitudes': typeof SolicitudesRoute
   '/tarjetas': typeof TarjetasRoute
@@ -77,6 +85,7 @@ export interface FileRoutesById {
   '/aulas': typeof AulasRoute
   '/login': typeof LoginRoute
   '/logs': typeof LogsRoute
+  '/profesor': typeof ProfesorRoute
   '/profesores': typeof ProfesoresRoute
   '/solicitudes': typeof SolicitudesRoute
   '/tarjetas': typeof TarjetasRoute
@@ -88,6 +97,7 @@ export interface FileRouteTypes {
     | '/aulas'
     | '/login'
     | '/logs'
+    | '/profesor'
     | '/profesores'
     | '/solicitudes'
     | '/tarjetas'
@@ -97,6 +107,7 @@ export interface FileRouteTypes {
     | '/aulas'
     | '/login'
     | '/logs'
+    | '/profesor'
     | '/profesores'
     | '/solicitudes'
     | '/tarjetas'
@@ -106,6 +117,7 @@ export interface FileRouteTypes {
     | '/aulas'
     | '/login'
     | '/logs'
+    | '/profesor'
     | '/profesores'
     | '/solicitudes'
     | '/tarjetas'
@@ -116,6 +128,7 @@ export interface RootRouteChildren {
   AulasRoute: typeof AulasRoute
   LoginRoute: typeof LoginRoute
   LogsRoute: typeof LogsRoute
+  ProfesorRoute: typeof ProfesorRoute
   ProfesoresRoute: typeof ProfesoresRoute
   SolicitudesRoute: typeof SolicitudesRoute
   TarjetasRoute: typeof TarjetasRoute
@@ -151,6 +164,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LogsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/profesor': {
+      id: '/profesor'
+      path: '/profesor'
+      fullPath: '/profesor'
+      preLoaderRoute: typeof ProfesorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/profesores': {
       id: '/profesores'
       path: '/profesores'
@@ -180,6 +200,7 @@ const rootRouteChildren: RootRouteChildren = {
   AulasRoute: AulasRoute,
   LoginRoute: LoginRoute,
   LogsRoute: LogsRoute,
+  ProfesorRoute: ProfesorRoute,
   ProfesoresRoute: ProfesoresRoute,
   SolicitudesRoute: SolicitudesRoute,
   TarjetasRoute: TarjetasRoute,
